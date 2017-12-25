@@ -10,6 +10,17 @@
       (:import [clojure.lang ExceptionInfo])))
 
 
+(comment
+  (let [db
+        (d/db-with
+         (d/empty-db)
+         [ { :db/id 1, :name  "Ivan", :age   15 }
+          { :db/id 2, :name  "Petr", :age   37 }
+          { :db/id 3, :name  "Ivan", :age   37 }
+          { :db/id 4, :age 15 }])]
+    (d/q '[:find ?e
+           :where [?e :name]] db)))
+
 
 (deftest test-joins
   (let [db (-> (d/empty-db)
@@ -55,6 +66,7 @@
              ["Petr" "Petr"]
              ["Ivan" "Petr"]
              ["Petr" "Ivan"]}))))
+
 
 
 (deftest test-q-coll
@@ -213,3 +225,5 @@
 
 #_(require 'datascript.test.query :reload)
 #_(clojure.test/test-ns 'datascript.test.query)
+
+

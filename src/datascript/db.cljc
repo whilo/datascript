@@ -3,6 +3,9 @@
     #?(:cljs [goog.array :as garray])
      clojure.walk
     [datascript.arrays :as da]
+    [hitchhiker.tree.core :as hc]
+    [hitchhiker.tree.messaging :as hmsg]
+    [hitchhiker.konserve :as kons]
     [datascript.btset :as btset])
   #?(:cljs (:require-macros [datascript.db :refer [case-tree combine-cmp raise defrecord-updatable cond-let]]))
   (:refer-clojure :exclude [seqable?]))
@@ -387,7 +390,37 @@
 (defn- ^:declared components->pattern [db index cs])
 (defn ^:declared indexing? [db attr])
 
-(defrecord-updatable DB [schema eavt aevt avet max-eid max-tx rschema hash]
+
+(defn slice-eavt
+  ([index ^Datom datom]
+   #_(prn "QUERY" datom)
+   (let [eavt (.-eavt index)
+         eavt-durable (.-eavt-durable index)
+         e (.-e datom)
+         a (.-a datom)
+         v (.-v datom)
+         old (btset/slice eavt datom)
+         new (seq (slice-eavt eavt-durable [e a v] [e a v]))]
+     #_(prn "OLD" old)
+     #_(prn "NEW" new)
+     (assert (= (vec old) (vec new)))
+     old))
+  ([index key-from key-to]
+   (->> (hc/lookup-fwd-iter index key-from)
+             (filter (fn [[k v]]
+                       ;; TODO prefix handling, so we get the proper range
+                       (let [[e a v] key-to]
+                         (cond (and e a v)
+                               (<= (compare k key-to) 0)
+
+                               (and e a)
+                               (<= (compare (vec (take 2 k)) (vec (take 2 key-to))) 0)
+
+                               e
+                               (<= (compare (first k) (first key-to)) 0)))))
+             (map second))))
+
+(defrecord-updatable DB [schema eavt eavt-durable aevt avet max-eid max-tx rschema hash]
   #?@(:cljs
       [IHash                (-hash  [db]        (hash-db db))
        IEquiv               (-equiv [db other]  (equiv-db db other))
@@ -415,21 +448,22 @@
            (let [[e a v tx] pattern
                  eavt (.-eavt db)
                  aevt (.-aevt db)
-                 avet (.-avet db)]
+                 avet (.-avet db)
+                 eavt-durable (.-eavt-durable db)]
              (case-tree [e a (some? v) tx]
-                        [(btset/slice eavt (Datom. e a v tx nil))              ;; e a v tx
-                         (btset/slice eavt (Datom. e a v nil nil))             ;; e a v _
-                         (->> (btset/slice eavt (Datom. e a nil nil nil))      ;; e a _ tx
+                        [(slice-eavt db (Datom. e a v tx nil))              ;; e a v tx
+                         (slice-eavt db (Datom. e a v nil nil))             ;; e a v _
+                         (->> (slice-eavt db (Datom. e a nil nil nil))      ;; e a _ tx
                               (filter (fn [^Datom d] (= tx (.-tx d)))))
-                         (btset/slice eavt (Datom. e a nil nil nil))           ;; e a _ _
-                         (->> (btset/slice eavt (Datom. e nil nil nil nil))    ;; e _ v tx
+                         (slice-eavt db (Datom. e a nil nil nil))           ;; e a _ _
+                         (->> (slice-eavt db (Datom. e nil nil nil nil))    ;; e _ v tx
                               (filter (fn [^Datom d] (and (= v (.-v d))
                                                           (= tx (.-tx d))))))
-                         (->> (btset/slice eavt (Datom. e nil nil nil nil))    ;; e _ v _
+                         (->> (slice-eavt db (Datom. e nil nil nil nil))    ;; e _ v _
                               (filter (fn [^Datom d] (= v (.-v d)))))
-                         (->> (btset/slice eavt (Datom. e nil nil nil nil))    ;; e _ _ tx
+                         (->> (slice-eavt db (Datom. e nil nil nil nil))    ;; e _ _ tx
                               (filter (fn [^Datom d] (= tx (.-tx d)))))
-                         (btset/slice eavt (Datom. e nil nil nil nil))         ;; e _ _ _
+                         (slice-eavt db (Datom. e nil nil nil nil))         ;; e _ _ _
                          (if (indexing? db a)                                  ;; _ a v tx
                            (->> (btset/slice avet (Datom. nil a v nil nil))      
                                 (filter (fn [^Datom d] (= tx (.-tx d)))))
@@ -576,6 +610,15 @@
     (validate-schema-key a :db/cardinality (:db/cardinality kv) #{:db.cardinality/one :db.cardinality/many}))
   schema)
 
+(require '[konserve.filestore :refer [new-fs-store]])
+
+(require '[hitchhiker.tree.core :refer [<??]])
+
+(def store (kons/add-hitchhiker-tree-handlers (<?? (new-fs-store "/tmp/datascript"))))
+
+(def backend (kons/->KonserveBackend store))
+
+
 (defn ^DB empty-db
   ([] (empty-db default-schema))
   ([schema]
@@ -583,6 +626,7 @@
     (map->DB {
       :schema  (validate-schema schema)
       :eavt    (btset/btset-by cmp-datoms-eavt)
+      :eavt-durable (<?? (hc/b-tree (hc/->Config 300 100 200)))
       :aevt    (btset/btset-by cmp-datoms-aevt)
       :avet    (btset/btset-by cmp-datoms-avet)
       :max-eid 0
@@ -597,6 +641,7 @@
                    (Datom. (dec tx0) nil nil nil nil))]
     (-> slice rseq first :e) ;; :e of last datom in slice
     0))
+
 
 (defn ^DB init-db
   ([datoms] (init-db datoms default-schema))
@@ -620,6 +665,14 @@
                  max-eid (init-max-eid eavt)]
                 :clj
                 [eavt        (apply btset/btset-by cmp-datoms-eavt datoms)
+                 eavt-durable (<?? (hc/reduce<
+                                    (fn [t datom]
+                                      (let [e (.-e datom)
+                                            a (.-a datom)
+                                            v (.-v datom)]
+                                        (hmsg/insert t [e a v] datom)))
+                                    (<?? (hc/b-tree (hc/->Config 300 100 200)))
+                                    (seq datoms)))
                  aevt        (apply btset/btset-by cmp-datoms-aevt datoms)
                  avet-datoms (filter (fn [^Datom d] (contains? indexed (.-a d))) datoms)
                  avet        (apply btset/btset-by cmp-datoms-avet avet-datoms)
@@ -628,6 +681,7 @@
         (map->DB {
           :schema  schema
           :eavt    eavt
+          :eavt-durable eavt-durable
           :aevt    aevt
           :avet    avet
           :max-eid max-eid
@@ -835,12 +889,15 @@
 
 ;; In context of `with-datom` we can use faster comparators which
 ;; do not check for nil (~10-15% performance gain in `transact`)
-
 (defn- with-datom [db ^Datom datom]
   (validate-datom db datom)
   (let [indexing? (indexing? db (.-a datom))]
     (if (.-added datom)
       (cond-> db
+        true      (update-in [:eavt-durable] #(let [e (.-e datom)
+                                                    a (.-a datom)
+                                                    v (.-v datom)]
+                                                (<?? (hmsg/insert % [e a v] datom))))
         true      (update-in [:eavt] btset/btset-conj datom cmp-datoms-eavt-quick)
         true      (update-in [:aevt] btset/btset-conj datom cmp-datoms-aevt-quick)
         indexing? (update-in [:avet] btset/btset-conj datom cmp-datoms-avet-quick)
@@ -848,11 +905,19 @@
         true      (assoc :hash (atom 0)))
       (if-let [removing (first (-search db [(.-e datom) (.-a datom) (.-v datom)]))]
         (cond-> db
+          true    (update-in [:eavt-durable] #(let [e (.-e datom)
+                                                    a (.-a datom)
+                                                    v (.-v datom)]
+                                                (<?? (hmsg/delete % [e a v]))))
           true      (update-in [:eavt] btset/btset-disj removing cmp-datoms-eavt-quick)
           true      (update-in [:aevt] btset/btset-disj removing cmp-datoms-aevt-quick)
           indexing? (update-in [:avet] btset/btset-disj removing cmp-datoms-avet-quick)
           true      (assoc :hash (atom 0)))
         db))))
+
+(comment
+  (:eavt-durable (with-datom (empty-db) (Datom. 123 :likes "Hans" 0 true))))
+
 
 (defn- transact-report [report datom]
   (-> report

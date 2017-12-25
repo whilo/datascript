@@ -7,6 +7,7 @@
   :dependencies [
     [org.clojure/clojure "1.7.0" :scope "provided"]
     [org.clojure/clojurescript "1.7.228" :scope "provided"]
+                 [hitchhiker-tree "0.1.0-SNAPSHOT"]
   ]
   
   :plugins [
@@ -81,7 +82,9 @@
            ;; because we use printer in tests, and earlier versions don’t support it
            :global-vars  { *print-namespace-maps* false }}
     :dev { :source-paths ["bench/src" "test" "dev"]
-           :dependencies [[org.clojure/tools.nrepl "0.2.12"]] }
+          :dependencies [[org.clojure/tools.nrepl "0.2.12"]
+                         
+                         ] }
   }
   
   :clean-targets ^{:protect false} [
