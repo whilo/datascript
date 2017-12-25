@@ -10,6 +10,15 @@
       (:import [clojure.lang ExceptionInfo])))
 
 
+(require '[hitchhiker.tree.core :as hc])
+
+(hc/lookup-fwd-iter 
+ (:eavt-durable
+  (d/db-with
+   (d/empty-db)
+   [ { :db/id 1, :name  "Ivan", :age   15 }]))
+ [2 :age])
+
 (comment
   (let [db
         (d/db-with
