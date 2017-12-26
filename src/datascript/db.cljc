@@ -685,7 +685,8 @@
     (validate-schema-key a :db/cardinality (:db/cardinality kv) #{:db.cardinality/one :db.cardinality/many}))
   schema)
 
-
+(def ^:const br 32)
+(def ^:const br-sqrt (long (Math/sqrt br)))
 
 
 (defn ^DB empty-db
@@ -695,11 +696,11 @@
     (map->DB {
       :schema  (validate-schema schema)
       :eavt    (btset/btset-by cmp-datoms-eavt)
-      :eavt-durable (<?? (hc/b-tree (hc/->Config 300 100 200)))
+      :eavt-durable (<?? (hc/b-tree (hc/->Config br-sqrt br (- br br-sqrt))))
       :aevt    (btset/btset-by cmp-datoms-aevt)
-      :aevt-durable (<?? (hc/b-tree (hc/->Config 300 100 200)))
+      :aevt-durable (<?? (hc/b-tree (hc/->Config br-sqrt br (- br br-sqrt))))
       :avet    (btset/btset-by cmp-datoms-avet)
-      :avet-durable (<?? (hc/b-tree (hc/->Config 300 100 200)))
+              :avet-durable (<?? (hc/b-tree (hc/->Config br-sqrt br (- br br-sqrt))))
       :max-eid 0
       :max-tx  tx0
       :rschema (rschema schema)
@@ -746,7 +747,7 @@
                                                                 (.-a datom)
                                                                 (.-v datom)
                                                                 (.-tx datom)] nil))
-                                              (<?? (hc/b-tree (hc/->Config 300 100 200)))
+                                              (<?? (hc/b-tree (hc/->Config br-sqrt br (- br br-sqrt))))
                                               (seq datoms)))
                 aevt        (apply btset/btset-by cmp-datoms-aevt datoms)
                 aevt-durable (<?? (hc/reduce< (fn [t ^Datom datom]
@@ -754,7 +755,7 @@
                                                                 (.-e datom)
                                                                 (.-v datom)
                                                                 (.-tx datom)] nil))
-                                              (<?? (hc/b-tree (hc/->Config 300 100 200)))
+                                              (<?? (hc/b-tree (hc/->Config br-sqrt br (- br br-sqrt))))
                                               (seq datoms)))
                 avet-datoms (filter (fn [^Datom d] (contains? indexed (.-a d))) datoms)
                 avet        (apply btset/btset-by cmp-datoms-avet avet-datoms)
@@ -763,7 +764,7 @@
                                                                 (.-v datom)
                                                                 (.-e datom)
                                                                 (.-tx datom)] nil))
-                                              (<?? (hc/b-tree (hc/->Config 300 100 200)))
+                                              (<?? (hc/b-tree (hc/->Config br-sqrt br (- br br-sqrt))))
                                               (seq datoms)))
                 max-eid     (init-max-eid eavt eavt-durable)])
            max-tx (transduce (map (fn [^Datom d] (.-tx d))) max tx0 eavt)]
