@@ -562,8 +562,9 @@
     (when-not (indexing? db attr)
       (raise "Attribute" attr "should be marked as :db/index true"))
     (validate-attr attr (list '-index-range 'db attr start end))
-    (let [from (resolve-datom db nil attr start nil)
-          to (resolve-datom db nil attr end nil)]
+    (let [^DB db db
+          ^Datom from (resolve-datom db nil attr start nil)
+          ^Datom to (resolve-datom db nil attr end nil)]
       (slice (.-avet db)
              (.-avet-durable db)
              from [(.-a from) (.-v from) (.-e from) (.-tx from)]
@@ -1003,7 +1004,7 @@
                                                                 nil)))
         true      (advance-max-eid (.-e datom))
         true      (assoc :hash (atom 0)))
-      (if-let [removing (first (-search db [(.-e datom) (.-a datom) (.-v datom)]))]
+      (if-let [removing ^Datom (first (-search db [(.-e datom) (.-a datom) (.-v datom)]))]
         (cond-> db
           true      (update-in [:eavt-durable] #(<?? (hmsg/delete % [(.-e removing) (.-a removing) (.-v removing) (.-tx removing)])))
           true      (update-in [:eavt] btset/btset-disj removing cmp-datoms-eavt-quick)

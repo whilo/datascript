@@ -52,7 +52,20 @@
     (let [updated (d/db-with loaded-db
                              [{:db/id -1 :name "Hiker" :age 9999}])]
       (is (= (d/q '[:find ?e
-                    :where [?e :name]] updated)
+                    :where [?e :name "Hiker"]] updated)
 
-             #{[5] [3] [2] [1]})))))
+             #{[5]})))))
+
+
+(comment
+  (let [new-db
+        (time
+         (d/db-with
+          db
+          (for [i (range 5 100000)]
+            {:db/id i :name (str "Bot" i) :age i})))]
+    (time (d/q '[:find ?e
+                 :where [?e :name "Bot42"]] new-db))
+    ))
+
 
