@@ -691,11 +691,14 @@
       :rschema (rschema schema)
       :hash    (atom 0)})))
 
-(defn- init-max-eid [eavt]
-  (if-let [slice (btset/slice
-                   eavt
-                   (Datom. nil nil nil nil nil)
-                   (Datom. (dec tx0) nil nil nil nil))]
+(defn- init-max-eid [eavt eavt-durable]
+  (if-let [slice (vec (slice
+                       eavt
+                       eavt-durable
+                       (Datom. nil nil nil nil nil)
+                       [nil nil nil nil]
+                       (Datom. (dec tx0) nil nil nil nil)
+                       [(dec tx0) nil nil nil]))]
     (-> slice rseq first :e) ;; :e of last datom in slice
     0))
 
@@ -746,7 +749,7 @@
                                                                 (.-tx datom)] datom))
                                               (<?? (hc/b-tree (hc/->Config 300 100 200)))
                                               (seq datoms)))
-                max-eid     (init-max-eid eavt)])
+                max-eid     (init-max-eid eavt eavt-durable)])
            max-tx (transduce (map (fn [^Datom d] (.-tx d))) max tx0 eavt)]
        (map->DB {:schema  schema
                  :eavt    eavt
