@@ -412,32 +412,38 @@
 
 (defn slice
   ([btset tree datom key]
-   (let [old (btset/slice btset datom)
+   (slice btset tree datom key datom key))
+  ([btset tree datom key datom-to key-to]
+   (let [old (btset/slice btset datom datom-to)
          [a b c d] key
-         new (->> (hc/lookup-fwd-iter tree [a b c d])
+         [d e f g] key-to
+         new (->> (hmsg/lookup-fwd-iter tree [a b c d])
                   (filter (fn [[k v]]
-                            (cond (and a b c d)
-                                  (<= (hc/compare k key) 0)
+                            ;; prefix scan
+                            (cond (and d e f g)
+                                  (<= (hc/compare k key-to) 0)
 
-                                  (and a b c)
+                                  (and d e f)
                                   (<= (hc/compare (vec (take 3 k))
-                                                  (vec (take 3 key))) 0)
+                                                  (vec (take 3 key-to))) 0)
 
-                                  (and a b)
+                                  (and d e)
                                   (<= (hc/compare (vec (take 2 k))
-                                                  (vec (take 2 key))) 0)
+                                                  (vec (take 2 key-to))) 0)
 
-                                  a
-                                  (<= (hc/compare (first k) (first key)) 0)
+                                  d
+                                  (<= (hc/compare (first k) (first key-to)) 0)
 
                                   :else true)))
                   (map second)
                   seq)]
-     #_(when-not (= (vec old) (vec new))
-       (prn "QUERY" key)
+     (when-not (= (vec old) (vec new))
+       (prn "QUERY" key key-to)
        (prn "Mismatch: ")
        (prn "OLD" old)
-       (prn "NEW" new))
+       (prn "NEW" new)
+       (try (prn "DIFF:" (diff old new))
+            (catch Error _)))
      new)))
 
 
@@ -511,26 +517,46 @@
 
   IIndexAccess
   (-datoms [db index cs]
-           (btset/slice (get db index) (components->pattern db index cs))
-           #_(let [pat (components->pattern db index cs)
-                 [mem dur] ({:eavt [(.-eavt db) (.-eavt-durable db)]
-                             :aevt [(.-aevt db) (.-aevt-durable db)]
-                             :avet [(.-avet db) (.-avet-durable db)]} index)]
-             #_(prn index cs pat)
-             (try
-               (slice mem dur pat cs)
-               (catch Error e
-                 (println "datoms failed:" e cs)))))
+           #_(btset/slice (get db index) (components->pattern db index cs))
+           (let [pat (components->pattern db index cs)
+                 [mem dur key]
+                 ({:eavt [(.-eavt db)
+                          (.-eavt-durable db)
+                          [(.-e pat) (.-a pat) (.-v pat) (.-tx pat)]]
+                   :aevt [(.-aevt db)
+                          (.-aevt-durable db)
+                          [(.-a pat) (.-e pat) (.-v pat) (.-tx pat)]]
+                   :avet [(.-avet db)
+                          (.-avet-durable db)
+                          [(.-a pat) (.-v pat) (.-e pat) (.-tx pat)]]} index)]
+             (slice mem dur pat key)))
 
   (-seek-datoms [db index cs]
-    (btset/slice (get db index) (components->pattern db index cs) (Datom. nil nil nil nil nil)))
+                (let [pat (components->pattern db index cs)
+                      [mem dur key]
+                      ({:eavt [(.-eavt db)
+                               (.-eavt-durable db)
+                               [(.-e pat) (.-a pat) (.-v pat) (.-tx pat)]]
+                        :aevt [(.-aevt db)
+                               (.-aevt-durable db)
+                               [(.-a pat) (.-e pat) (.-v pat) (.-tx pat)]]
+                        :avet [(.-avet db)
+                               (.-avet-durable db)
+                               [(.-a pat) (.-v pat) (.-e pat) (.-tx pat)]]} index)]
+                  (slice mem dur pat key (Datom. nil nil nil nil nil) [nil nil nil nil]))
+    #_(btset/slice (get db index) (components->pattern db index cs) (Datom. nil nil nil nil nil)))
 
   (-index-range [db attr start end]
     (when-not (indexing? db attr)
       (raise "Attribute" attr "should be marked as :db/index true"))
     (validate-attr attr (list '-index-range 'db attr start end))
-    (btset/slice (.-avet db) (resolve-datom db nil attr start nil)
-                 (resolve-datom db nil attr end nil))))
+    (let [from (resolve-datom db nil attr start nil)
+          to (resolve-datom db nil attr end nil)]
+      (slice (.-avet db)
+             (.-avet-durable db)
+             from [(.-a from) (.-v from) (.-e from) (.-tx from)]
+             to [(.-a to) (.-v to) (.-e to) (.-tx to)])
+      #_(btset/slice (.-avet db) from to))))
 
 (defn db? [x]
   (and (satisfies? ISearch x)
