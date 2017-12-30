@@ -8,7 +8,8 @@
     [hitchhiker.konserve :as kons]
     [datascript.btset :as btset])
   #?(:cljs (:require-macros [datascript.db :refer [case-tree combine-cmp raise defrecord-updatable cond-let]]))
-  (:refer-clojure :exclude [seqable?]))
+  (:refer-clojure :exclude [seqable?])
+  #?(:clj (:import [clojure.lang AMapEntry])))
 
 ;; ----------------------------------------------------------------------------
 
@@ -408,36 +409,62 @@
 (defn- ^:declared components->pattern [db index cs])
 (defn ^:declared indexing? [db attr])
 
-(require '[clojure.data :refer [diff]])
 
 (defn slice
   ([btset tree datom key create-datom]
    (slice btset tree datom key datom key create-datom))
   ([btset tree datom key datom-to key-to create-datom]
-   (let [old (btset/slice btset datom datom-to)
+   (let [;old (btset/slice btset datom datom-to)
+
          [a b c d] key
-         [d e f g] key-to
-         new (->> (hmsg/lookup-fwd-iter tree [a b c d])
-                  (filter (fn [[k v]]
-                            ;; prefix scan
-                            (cond (and d e f g)
-                                  (<= (hc/compare k key-to) 0)
+         [e f g h] key-to
+         xf (comp
+             (filter (fn [^AMapEntry kv]
+                       ;; prefix scan
+                       (let [key (.key kv)
+                             #_new #_(cond (and e f g h)
+                                     (<= (hc/compare key key-to) 0)
 
-                                  (and d e f)
-                                  (<= (hc/compare (vec (take 3 k))
-                                                  (vec (take 3 key-to))) 0)
+                                     (and e f g)
+                                     (<= (hc/compare (vec (take 3 key))
+                                                     (vec (take 3 key-to))) 0)
 
-                                  (and d e)
-                                  (<= (hc/compare (vec (take 2 k))
-                                                  (vec (take 2 key-to))) 0)
+                                     (and e f)
+                                     (<= (hc/compare (vec (take 2 key))
+                                                     (vec (take 2 key-to))) 0)
 
-                                  d
-                                  (<= (hc/compare (first k) (first key-to)) 0)
+                                     e
+                                     (<= (hc/compare (first key) (first key-to)) 0)
 
-                                  :else true)))
-                  (map #(apply create-datom (first %)))
+                                     :else true)
+                             [i j k l] key
+                             new (not (cond (and e f g h)
+                                            (or (> (hc/compare i e) 0)
+                                                (> (hc/compare j f) 0)
+                                                (> (hc/compare k g) 0)
+                                                (> (hc/compare l h) 0)) 
+
+                                            (and e f g)
+                                            (or (> (hc/compare i e) 0)
+                                                (> (hc/compare j f) 0)
+                                                (> (hc/compare k g) 0))
+
+                                            (and e f)
+                                            (or (> (hc/compare i e) 0)
+                                                (> (hc/compare j f) 0))
+
+                                            e
+                                            (> (hc/compare i e) 0)
+
+                                            :else false))]
+                         #_(when (not= old new)
+                             (prn "Mismatch:" key key-to old new)) new)))
+             (map (fn [kv]
+                    (let [[a b c d] (.key ^AMapEntry kv)]
+                      (create-datom a b c d)))))
+         new (->> (sequence xf (hmsg/lookup-fwd-iter tree [a b c d]))
                   seq)]
-     (when-not (= (vec old) (vec new))
+     #_(when-not (= (vec old) (vec new))
        (prn "QUERY" key key-to)
        (prn "Mismatch: ")
        (prn "OLD" old)
@@ -685,7 +712,7 @@
     (validate-schema-key a :db/cardinality (:db/cardinality kv) #{:db.cardinality/one :db.cardinality/many}))
   schema)
 
-(def ^:const br 32)
+(def ^:const br 300)
 (def ^:const br-sqrt (long (Math/sqrt br)))
 
 
@@ -700,7 +727,7 @@
       :aevt    (btset/btset-by cmp-datoms-aevt)
       :aevt-durable (<?? (hc/b-tree (hc/->Config br-sqrt br (- br br-sqrt))))
       :avet    (btset/btset-by cmp-datoms-avet)
-              :avet-durable (<?? (hc/b-tree (hc/->Config br-sqrt br (- br br-sqrt))))
+      :avet-durable (<?? (hc/b-tree (hc/->Config br-sqrt br (- br br-sqrt))))
       :max-eid 0
       :max-tx  tx0
       :rschema (rschema schema)
